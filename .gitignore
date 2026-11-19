@@ -1,0 +1,7 @@
+# binários e artefatos de build
+*.exe
+*.o
+linked
+imports.s
+imports.o
+layout.ld
