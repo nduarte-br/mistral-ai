@@ -1,5 +1,41 @@
+import os
+import shutil
 import subprocess as sp
 from pathlib import Path
+
+REQUIRED=('as','gcc','ld','objcopy')
+MSG_TOOLNAO="""
+Ferramentas de compilacao nao encontradas no PATH. Este script usa as ferramentas
+GNU (as, gcc, ld, objcopy) para gerar os executaveis Windows.
+
+Opcoes para obter o toolchain:
+
+1) WSL (testado; mesmo caminho do desenvolvimento):
+   wsl --install -d Debian   (ou Ubuntu)
+   dentro do WSL:  sudo apt update && sudo apt install -y build-essential python3
+   e entao:        cd /mnt/c/Users/norberto.duarte/Downloads/mistral-ai-main/mistral-ai-main
+                   python3 build.py
+
+2) MSYS2 (https://www.msys2.org):
+   no shell UCRT64:  pacman -S mingw-w64-ucrt-x86_64-toolchain
+   e rode o build.py nesse mesmo shell (ou adicione C:\\msys64\\ucrt64\\bin ao PATH).
+
+3) Outro prefixo de toolchain: defina a variavel TOOL_PREFIX antes de rodar,
+   ex.: set TOOL_PREFIX=x86_64-w64-mingw32-
+"""
+
+def _prefix():
+ p=os.environ.get('TOOL_PREFIX','')
+ if p:return p
+ for cand in ('','x86_64-w64-mingw32-','x86_64-linux-gnu-','mingw64-'):
+  if all(shutil.which(cand+t) for t in REQUIRED):return cand
+ return ''
+
+def _tools():
+ p=_prefix()
+ if all(shutil.which(p+t) for t in REQUIRED):return [p+t for t in REQUIRED]
+ raise SystemExit(MSG_TOOLNAO)
+
 def run(*args): sp.run(args,check=True)
 
 MSVCRT='_wfopen fgetc fclose ferror fwrite realloc free wprintf getwchar wcscmp wcslen exit __wgetmainargs'
@@ -27,6 +63,7 @@ def imports_asm(dlls):
  return '\n'.join(asm)+'\n'
 
 GCCF=['-Os','-mno-red-zone','-fshort-wchar','-fno-stack-protector','-fno-asynchronous-unwind-tables','-fno-builtin','-fno-pie','-D_WIN32']
+AS, GCC, LD, OBJCOPY = _tools()
 
 def patch_pe(exe,dlls):
  import struct
@@ -49,15 +86,15 @@ def patch_pe(exe,dlls):
 
 def build(dlls,sources,out,subsystem):
  Path('imports.s').write_text(imports_asm(dlls))
- run('as','imports.s','-o','imports.o')
+ run(AS,'imports.s','-o','imports.o')
  objs=[]
  for s in sources:
   o=s.replace('.c','.o')
-  run('gcc',*GCCF,'-c',s,'-o',o)
+  run(GCC,*GCCF,'-c',s,'-o',o)
   objs.append(o)
  Path('layout.ld').write_text("SECTIONS { . = 0x401000; .text : { *(.text*) } . = ALIGN(4096); .rdata : { *(.rodata*) } . = ALIGN(4096); .idata : { *(.idata) } /DISCARD/ : { *(.comment) *(.note*) } }")
- run('ld','-T','layout.ld','-e','start',*objs,'imports.o','-o','linked')
- run('objcopy','-O','pei-x86-64','--image-base','0x400000','--subsystem',subsystem,'--section-alignment','4096','--file-alignment','512','--strip-all','linked',out)
+ run(LD,'-T','layout.ld','-e','start',*objs,'imports.o','-o','linked')
+ run(OBJCOPY,'-O','pei-x86-64','--image-base','0x400000','--subsystem',subsystem,'--section-alignment','4096','--file-alignment','512','--strip-all','linked',out)
  patch_pe(Path(out),dlls)
 
 build(CLI_DLLS,['uc_core.c','ConversorUC.c'],'ConversorUC.exe','console')
